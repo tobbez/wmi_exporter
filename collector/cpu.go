@@ -5,7 +5,7 @@ package collector
 import (
 	"strings"
 
-	"github.com/StackExchange/wmi"
+	"github.com/leoluk/perflib_exporter/perflib"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
 )
@@ -64,148 +64,104 @@ func (c *CPUCollector) Collect(ch chan<- prometheus.Metric) error {
 	return nil
 }
 
-// Win32_PerfRawData_PerfOS_Processor docs:
-// - https://msdn.microsoft.com/en-us/library/aa394317(v=vs.90).aspx
-type Win32_PerfRawData_PerfOS_Processor struct {
+type PerflibProcessor struct {
 	Name                  string
-	C1TransitionsPersec   uint64
-	C2TransitionsPersec   uint64
-	C3TransitionsPersec   uint64
-	DPCRate               uint32
-	DPCsQueuedPersec      uint32
-	InterruptsPersec      uint32
-	PercentC1Time         uint64
-	PercentC2Time         uint64
-	PercentC3Time         uint64
-	PercentDPCTime        uint64
-	PercentIdleTime       uint64
-	PercentInterruptTime  uint64
-	PercentPrivilegedTime uint64
-	PercentProcessorTime  uint64
-	PercentUserTime       uint64
+	C1Transitions         float64 `perflib:"C1 Transitions/sec"`
+	C2Transitions         float64 `perflib:"C2 Transitions/sec"`
+	C3Transitions         float64 `perflib:"C3 Transitions/sec"`
+	DPCRate               float64 `perflib:"DPC Rate"`
+	DPCsQueued            float64 `perflib:"DPCs Queued/sec"`
+	Interrupts            float64 `perflib:"Interrupts/sec"`
+	PercentC2Time         float64 `perflib:"% C1 Time"`
+	PercentC3Time         float64 `perflib:"% C2 Time"`
+	PercentC1Time         float64 `perflib:"% C3 Time"`
+	PercentDPCTime        float64 `perflib:"% DPC Time"`
+	PercentIdleTime       float64 `perflib:"% Idle Time"`
+	PercentInterruptTime  float64 `perflib:"% Interrupt Time"`
+	PercentPrivilegedTime float64 `perflib:"% Privileged Time"`
+	PercentProcessorTime  float64 `perflib:"% Processor Time"`
+	PercentUserTime       float64 `perflib:"% User Time"`
 }
 
-/* NOTE: This is an alternative class, but it is not as widely available. Decide which to use
-type Win32_PerfRawData_Counters_ProcessorInformation struct {
-	Name                        string
-	AverageIdleTime             uint64
-	C1TransitionsPersec         uint64
-	C2TransitionsPersec         uint64
-	C3TransitionsPersec         uint64
-	ClockInterruptsPersec       uint64
-	DPCRate                     uint64
-	DPCsQueuedPersec            uint64
-	IdleBreakEventsPersec       uint64
-	InterruptsPersec            uint64
-	ParkingStatus               uint64
-	PercentC1Time               uint64
-	PercentC2Time               uint64
-	PercentC3Time               uint64
-	PercentDPCTime              uint64
-	PercentIdleTime             uint64
-	PercentInterruptTime        uint64
-	PercentofMaximumFrequency   uint64
-	PercentPerformanceLimit     uint64
-	PercentPriorityTime         uint64
-	PercentPrivilegedTime       uint64
-	PercentPrivilegedUtility    uint64
-	PercentProcessorPerformance uint64
-	PercentProcessorTime        uint64
-	PercentProcessorUtility     uint64
-	PercentUserTime             uint64
-	PerformanceLimitFlags       uint64
-	ProcessorFrequency          uint64
-	ProcessorStateFlags         uint64
-}*/
-
 func (c *CPUCollector) collect(ch chan<- prometheus.Metric) (*prometheus.Desc, error) {
-	var dst []Win32_PerfRawData_PerfOS_Processor
-	q := queryAll(&dst)
-	if err := wmi.Query(q, &dst); err != nil {
+	const processorCounterIndex = "238"
+	objects, err := perflib.QueryPerformanceData(processorCounterIndex)
+	if err != nil {
+		return nil, err
+	}
+	ps := make([]PerflibProcessor, 0)
+	err = UnmarshalObject(objects[0], &ps)
+	if err != nil {
 		return nil, err
 	}
 
-	for _, data := range dst {
-		if strings.Contains(data.Name, "_Total") {
+	for _, data := range ps {
+		if strings.Contains(strings.ToLower(data.Name), "_total") {
 			continue
 		}
 
 		core := data.Name
 
-		// These are only available from Win32_PerfRawData_Counters_ProcessorInformation, which is only available from Win2008R2+
-		/*ch <- prometheus.MustNewConstMetric(
-			c.ProcessorFrequency,
-			prometheus.GaugeValue,
-			float64(data.ProcessorFrequency),
-			socket, core,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			c.MaximumFrequency,
-			prometheus.GaugeValue,
-			float64(data.PercentofMaximumFrequency)/100*float64(data.ProcessorFrequency),
-			socket, core,
-		)*/
-
 		ch <- prometheus.MustNewConstMetric(
 			c.CStateSecondsTotal,
 			prometheus.GaugeValue,
-			float64(data.PercentC1Time)*ticksToSecondsScaleFactor,
+			data.PercentC1Time,
 			core, "c1",
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.CStateSecondsTotal,
 			prometheus.GaugeValue,
-			float64(data.PercentC2Time)*ticksToSecondsScaleFactor,
+			data.PercentC2Time,
 			core, "c2",
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.CStateSecondsTotal,
 			prometheus.GaugeValue,
-			float64(data.PercentC3Time)*ticksToSecondsScaleFactor,
+			data.PercentC3Time,
 			core, "c3",
 		)
 
 		ch <- prometheus.MustNewConstMetric(
 			c.TimeTotal,
 			prometheus.GaugeValue,
-			float64(data.PercentIdleTime)*ticksToSecondsScaleFactor,
+			data.PercentIdleTime,
 			core, "idle",
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.TimeTotal,
 			prometheus.GaugeValue,
-			float64(data.PercentInterruptTime)*ticksToSecondsScaleFactor,
+			data.PercentInterruptTime,
 			core, "interrupt",
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.TimeTotal,
 			prometheus.GaugeValue,
-			float64(data.PercentDPCTime)*ticksToSecondsScaleFactor,
+			data.PercentDPCTime,
 			core, "dpc",
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.TimeTotal,
 			prometheus.GaugeValue,
-			float64(data.PercentPrivilegedTime)*ticksToSecondsScaleFactor,
+			data.PercentPrivilegedTime,
 			core, "privileged",
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.TimeTotal,
 			prometheus.GaugeValue,
-			float64(data.PercentUserTime)*ticksToSecondsScaleFactor,
+			data.PercentUserTime,
 			core, "user",
 		)
 
 		ch <- prometheus.MustNewConstMetric(
 			c.InterruptsTotal,
 			prometheus.CounterValue,
-			float64(data.InterruptsPersec),
+			data.Interrupts,
 			core,
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.DPCsTotal,
 			prometheus.CounterValue,
-			float64(data.DPCsQueuedPersec),
+			data.DPCsQueued,
 			core,
 		)
 	}
