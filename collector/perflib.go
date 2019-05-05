@@ -7,6 +7,19 @@ import (
 	"github.com/leoluk/perflib_exporter/perflib"
 )
 
+func getPerflibSnapshot() (map[string]*perflib.PerfObject, error) {
+	objects, err := perflib.QueryPerformanceData("Global")
+	if err != nil {
+		return nil, err
+	}
+
+	indexed := make(map[string]*perflib.PerfObject)
+	for _, obj := range objects {
+		indexed[obj.Name] = obj
+	}
+	return indexed, nil
+}
+
 const (
 	perfCounterRawcountHex         uint32 = 0
 	perfCounterLargeRawcountHex           = 256
@@ -52,7 +65,7 @@ const (
 
 func UnmarshalObject(obj *perflib.PerfObject, vs interface{}) error {
 	if obj == nil {
-		return fmt.Errorf("obj is nil")
+		return fmt.Errorf("counter not found")
 	}
 	rv := reflect.ValueOf(vs)
 	if rv.Kind() != reflect.Ptr || rv.IsNil() {
@@ -75,7 +88,11 @@ func UnmarshalObject(obj *perflib.PerfObject, vs interface{}) error {
 
 		counters := make(map[string]*perflib.PerfCounter, len(instance.Counters))
 		for _, ctr := range instance.Counters {
-			counters[ctr.Def.Name] = ctr
+			if ctr.Def.IsBaseValue && !ctr.Def.IsNanosecondCounter {
+				counters[ctr.Def.Name+"_Base"] = ctr
+			} else {
+				counters[ctr.Def.Name] = ctr
+			}
 		}
 
 		for i := 0; i < target.NumField(); i++ {
@@ -95,11 +112,10 @@ func UnmarshalObject(obj *perflib.PerfObject, vs interface{}) error {
 
 			switch ctr.Def.CounterType {
 			case perfElapsedTime:
-				target.Field(i).SetFloat(float64(ctr.Value-116444736000000000) / float64(obj.Frequency))
-			case perf100nsecTimer:
+				target.Field(i).SetFloat(float64(ctr.Value-windowsEpoch) / float64(obj.Frequency))
+			case perf100nsecTimer, perfPrecision100nsTimer:
 				target.Field(i).SetFloat(float64(ctr.Value) * ticksToSecondsScaleFactor)
 			default:
-				fmt.Println(ctr.Def.CounterType, ctr.Def.Name)
 				target.Field(i).SetFloat(float64(ctr.Value))
 			}
 		}

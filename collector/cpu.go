@@ -5,9 +5,7 @@ package collector
 import (
 	"strings"
 
-	"github.com/leoluk/perflib_exporter/perflib"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/common/log"
 )
 
 func init() {
@@ -54,17 +52,7 @@ func NewCPUCollector() (Collector, error) {
 	}, nil
 }
 
-// Collect sends the metric values for each metric
-// to the provided prometheus Metric channel.
-func (c *CPUCollector) Collect(ch chan<- prometheus.Metric) error {
-	if desc, err := c.collect(ch); err != nil {
-		log.Error("failed collecting cpu metrics:", desc, err)
-		return err
-	}
-	return nil
-}
-
-type PerflibProcessor struct {
+type perflibProcessor struct {
 	Name                  string
 	C1Transitions         float64 `perflib:"C1 Transitions/sec"`
 	C2Transitions         float64 `perflib:"C2 Transitions/sec"`
@@ -83,88 +71,84 @@ type PerflibProcessor struct {
 	PercentUserTime       float64 `perflib:"% User Time"`
 }
 
-func (c *CPUCollector) collect(ch chan<- prometheus.Metric) (*prometheus.Desc, error) {
-	const processorCounterIndex = "238"
-	objects, err := perflib.QueryPerformanceData(processorCounterIndex)
+// Collect sends the metric values for each metric
+// to the provided prometheus Metric channel.
+func (c *CPUCollector) Collect(ctx *ScrapeContext, ch chan<- prometheus.Metric) error {
+	data := make([]perflibProcessor, 0)
+	err := UnmarshalObject(ctx.perfObjects["Processor"], &data)
 	if err != nil {
-		return nil, err
-	}
-	ps := make([]PerflibProcessor, 0)
-	err = UnmarshalObject(objects[0], &ps)
-	if err != nil {
-		return nil, err
+		return err
 	}
 
-	for _, data := range ps {
-		if strings.Contains(strings.ToLower(data.Name), "_total") {
+	for _, cpu := range data {
+		if strings.Contains(strings.ToLower(cpu.Name), "_total") {
 			continue
 		}
-
-		core := data.Name
+		core := cpu.Name
 
 		ch <- prometheus.MustNewConstMetric(
 			c.CStateSecondsTotal,
 			prometheus.GaugeValue,
-			data.PercentC1Time,
+			cpu.PercentC1Time,
 			core, "c1",
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.CStateSecondsTotal,
 			prometheus.GaugeValue,
-			data.PercentC2Time,
+			cpu.PercentC2Time,
 			core, "c2",
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.CStateSecondsTotal,
 			prometheus.GaugeValue,
-			data.PercentC3Time,
+			cpu.PercentC3Time,
 			core, "c3",
 		)
 
 		ch <- prometheus.MustNewConstMetric(
 			c.TimeTotal,
 			prometheus.GaugeValue,
-			data.PercentIdleTime,
+			cpu.PercentIdleTime,
 			core, "idle",
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.TimeTotal,
 			prometheus.GaugeValue,
-			data.PercentInterruptTime,
+			cpu.PercentInterruptTime,
 			core, "interrupt",
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.TimeTotal,
 			prometheus.GaugeValue,
-			data.PercentDPCTime,
+			cpu.PercentDPCTime,
 			core, "dpc",
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.TimeTotal,
 			prometheus.GaugeValue,
-			data.PercentPrivilegedTime,
+			cpu.PercentPrivilegedTime,
 			core, "privileged",
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.TimeTotal,
 			prometheus.GaugeValue,
-			data.PercentUserTime,
+			cpu.PercentUserTime,
 			core, "user",
 		)
 
 		ch <- prometheus.MustNewConstMetric(
 			c.InterruptsTotal,
 			prometheus.CounterValue,
-			data.Interrupts,
+			cpu.Interrupts,
 			core,
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.DPCsTotal,
 			prometheus.CounterValue,
-			data.DPCsQueued,
+			cpu.DPCsQueued,
 			core,
 		)
 	}
 
-	return nil, nil
+	return nil
 }
