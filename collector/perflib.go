@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"github.com/leoluk/perflib_exporter/perflib"
+	"github.com/prometheus/common/log"
 )
 
 func getPerflibSnapshot() (map[string]*perflib.PerfObject, error) {
@@ -104,6 +105,7 @@ func UnmarshalObject(obj *perflib.PerfObject, vs interface{}) error {
 
 			ctr, found := counters[tag]
 			if !found {
+				log.Debugf("missing counter %q, has %v", tag, counters)
 				return fmt.Errorf("could not find counter %q on instance", tag)
 			}
 			if !target.Field(i).CanSet() {
